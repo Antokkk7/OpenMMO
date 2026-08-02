@@ -10,50 +10,27 @@ group = "de.fiereu.openmmo"
 version = "1.0.0"
 
 dependencies {
-  implementation(libs.bundles.bytebuddy)
   implementation(libs.bundles.crypto)
+  testImplementation(libs.bundles.kotest)
 }
 
 fun String.evalEnvVars(): String =
     replace(Regex("\\$\\{([^}]+)\\}")) { System.getenv(it.groupValues[1]) ?: it.value }
 
-tasks.register("setLocalServer") {
-  description = "Creates a configuration file for PokeMMO that sets the login server to 127.0.0.1."
-
-  val pokemmoWorkingDir = (project.findProperty("pokemmo.workingDir") as String).evalEnvVars()
-  val configFile = File("$pokemmoWorkingDir/config/openmmo.properties")
-
-  doFirst {
-    if (!configFile.exists()) {
-      configFile.parentFile.mkdirs()
-      configFile.createNewFile()
-    }
-  }
-
-  doLast {
-    var content = configFile.readText()
-    fun createOrReplace(key: String, value: String): String =
-        if (content.contains(key)) content.replace("$key=.*", "$key=$value")
-        else "$content\n$key=$value"
-    content = createOrReplace("client.misc.ignore_feed", "true")
-    content = createOrReplace("loginserver.network.client.host", "127.0.0.1")
-    configFile.writeText(content)
-  }
-}
-
 tasks.register<JavaExec>("run") {
   group = "application"
-  description = "Runs the PokeMMO client with the ByteBuddy patcher attached"
-  dependsOn("setLocalServer", "copyPublicKeys")
-  tasks.processResources.get().mustRunAfter("copyPublicKeys")
+  description = "Patches the PokeMMO client and runs the patched copy"
+  dependsOn("copyPublicKeys", "copyPrivateKeyFeed")
+  tasks.processResources.get().mustRunAfter("copyPublicKeys", "copyPrivateKeyFeed")
 
-  val pokemmoMainClass = project.findProperty("pokemmo.mainClass") as String
   val pokemmoExecutable = (project.findProperty("pokemmo.executable") as String).evalEnvVars()
   val pokemmoWorkingDir = (project.findProperty("pokemmo.workingDir") as String).evalEnvVars()
+  val patchedExecutable = layout.buildDirectory.file("PokeMMO-openmmo.exe")
 
   mainClass.set("de.fiereu.openmmo.patcher.Launcher")
-  classpath(sourceSets.main.get().runtimeClasspath, files(pokemmoExecutable))
-  systemProperty("openmmo.targetMain", pokemmoMainClass)
-  jvmArgs("-XX:+EnableDynamicAgentLoading")
-  workingDir = File(pokemmoWorkingDir)
+  classpath(sourceSets.main.get().runtimeClasspath)
+  systemProperty("openmmo.executable", pokemmoExecutable)
+  systemProperty("openmmo.workingDir", pokemmoWorkingDir)
+  systemProperty("openmmo.output", patchedExecutable.get().asFile.path)
+  maxHeapSize = "1g"
 }
